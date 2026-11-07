@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Kindle Web キャプチャ — インストール</title>
+<style>
+  body { margin:0; background:#0b1220; color:#e5e7eb;
+    font-family: system-ui, -apple-system, "Hiragino Sans", sans-serif;
+    line-height:1.7; }
+  main { max-width:640px; margin:0 auto; padding:24px 16px 48px; }
+  h1 { font-size:22px; margin:8px 0 4px; }
+  h2 { font-size:16px; margin:28px 0 8px; color:#93c5fd; }
+  p, li { font-size:15px; }
+  .sub { color:#9ca3af; font-size:13px; margin:0 0 16px; }
+  .card { background:#101827; border:1px solid #334155; border-radius:12px;
+    padding:16px; margin:16px 0; }
+  .install { display:block; text-align:center; background:#2563eb; color:#fff;
+    font-size:18px; font-weight:700; text-decoration:none;
+    padding:16px; border-radius:10px; margin:12px 0 4px; }
+  .install:active { background:#1d4ed8; }
+  .ver { color:#9ca3af; font-size:13px; text-align:center; margin:4px 0 0; }
+  ol { padding-left:22px; margin:8px 0; }
+  code { background:#1f2937; padding:1px 6px; border-radius:5px; font-size:13px; }
+  .note { color:#9ca3af; font-size:13px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Kindle Web キャプチャ</h1>
+  <p class="sub">ブラウザ版 Kindle（read.amazon.co.jp）からページ画像を取り出すための道具置き場</p>
+
+  <div class="card">
+    <h2 style="margin-top:0">STEP 1：構造調査プローブ</h2>
+    <p>本文がどの方式で描画されているかを調べるスクリプトです（画像や本文は保存しません）。結果の JSON を見て、キャプチャ本体の作り方を決めます。</p>
+    <a class="install" href="./kindle-dom-probe.user.js">プローブをインストール</a>
+    <p class="ver">Kindle Cloud Reader DOM Probe v1.0.0 ／ 要 Tampermonkey（Chrome / Edge）</p>
+  </div>
+
+  <h2>使い方</h2>
+  <ol>
+    <li>上のボタンからプローブをインストールする（Tampermonkey の確認画面で「インストール」）</li>
+    <li><a href="https://read.amazon.co.jp/" style="color:#93c5fd">read.amazon.co.jp</a> で『幼女戦記』を開く</li>
+    <li>右下の <code>DOM調査</code> → <code>現在ページを調査</code> → <code>JSONコピー</code></li>
+    <li>本文を手動で1ページめくって、もう一度 調査 → JSONコピー</li>
+    <li>2つの JSON を Muse のチャットに貼る</li>
+  </ol>
+
+  <p class="note">キャプチャ本体（自動ページ送り・連番保存）は、プローブの結果を見てからここに追加します。</p>
+</main>
+</body>
+</html>
