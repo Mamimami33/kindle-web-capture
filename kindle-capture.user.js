@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Kindle Web Page Capture
 // @namespace    local.kindle-capture
-// @version      1.0.2
+// @version      1.0.3
 // @description  Kindle Webの本文画像をPNGとして保存する（Canvas優先・ページ送り複合方式）
 // @author       local
 // @match        https://read.amazon.co.jp/*
@@ -14,11 +14,11 @@
 
   const sleep = ms => new Promise(r => setTimeout(r, ms));
   const MAX_PAGES = 1500;
-  const WAIT_BASE_MS = 800;
+  const WAIT_BASE_MS = 150;
   const PROGRESS_TOTAL = MAX_PAGES;
   const START_PAGE_DEFAULT = 1;
-  const ADVANCE_TOTAL_TIMEOUT_MS = 60000;
-  const ADVANCE_STRATEGY_TIMEOUT_MS = 12000;
+  const ADVANCE_TOTAL_TIMEOUT_MS = 30000;
+  const ADVANCE_STRATEGY_TIMEOUT_MS = 6000;
 
   const NEXT_SELECTORS = [
     'div.kr-chevron-container-left button.chevron.round',
@@ -60,7 +60,7 @@
       'box-shadow: 0 4px 16px rgba(0,0,0,0.25)',
     ].join(';');
     panel.innerHTML =
-      '<div style="font-weight:700;margin-bottom:6px">Kindle Web Capture v1.0.2</div>' +
+      '<div style="font-weight:700;margin-bottom:6px">Kindle Web Capture v1.0.3</div>' +
       '<div>開始番号: <input id="kc-start-page" type="number" min="1" value="1" style="width:64px"></div>' +
       '<div id="kc-status" style="margin:6px 0;min-height:36px">待機中</div>' +
       '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
@@ -364,9 +364,11 @@
         }
       }
       if (now - start >= timeoutMs) return { changed: false };
-      await sleep(250);
+      await sleep(100);
     }
   }
+
+  let lastWorkingStrategy = null;
 
   async function loadNextPage(prev, pageNo) {
     const advanceStart = Date.now();
@@ -378,7 +380,7 @@
         name: 'ボタン',
         run: async () => {
           hoverLeftEdge();
-          await sleep(600);
+          await sleep(250);
           const btn = findNextButton();
           if (!btn) return 'skip';
           if (btn.disabled) return 'disabled';
@@ -396,7 +398,10 @@
       },
     ];
 
-    for (const st of strategies) {
+    const ordered = lastWorkingStrategy
+      ? [...strategies].sort((a, b) => (a.name === lastWorkingStrategy ? -1 : 0) - (b.name === lastWorkingStrategy ? -1 : 0))
+      : strategies;
+    for (const st of ordered) {
       if (stopRequested) return { ok: false, reason: 'stopped', history };
       if (remaining() <= 0) break;
       let acted;
@@ -413,6 +418,7 @@
       if (res.stopped) return { ok: false, reason: 'stopped', history };
       if (res.changed) {
         history.push(`${st.name}: 成功`);
+        lastWorkingStrategy = st.name;
         return { ok: true, via: st.name, history };
       }
       history.push(`${st.name}: 変化なし`);
@@ -473,7 +479,7 @@
           break;
         }
         pageNo = pageNo + 1;
-        await sleep(300);
+        await sleep(100);
       }
     } catch (err) {
       const msg = sameErrorMessage(err);
