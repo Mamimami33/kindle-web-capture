@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Kindle Web Page Capture
 // @namespace    local.kindle-capture
-// @version      1.0.1
-// @description  Kindle Webの本文画像をPNGとして保存する（Canvas優先・fetchフォールバック）
+// @version      1.0.2
+// @description  Kindle Webの本文画像をPNGとして保存する（Canvas優先・ページ送り複合方式）
 // @author       local
 // @match        https://read.amazon.co.jp/*
 // @grant        none
@@ -15,12 +15,10 @@
   const sleep = ms => new Promise(r => setTimeout(r, ms));
   const MAX_PAGES = 1500;
   const WAIT_BASE_MS = 800;
-  const ORDER_MIN_GAP_MS = 0;
-  const SAVE_MIN_GAP_MS = 300;
-  const START_PAGE_NO_OFFSET = 0;
   const PROGRESS_TOTAL = MAX_PAGES;
-  const FETCH_TIMEOUT_MS = 30000;
   const START_PAGE_DEFAULT = 1;
+  const ADVANCE_TOTAL_TIMEOUT_MS = 60000;
+  const ADVANCE_STRATEGY_TIMEOUT_MS = 12000;
 
   const NEXT_SELECTORS = [
     'div.kr-chevron-container-left button.chevron.round',
@@ -62,7 +60,7 @@
       'box-shadow: 0 4px 16px rgba(0,0,0,0.25)',
     ].join(';');
     panel.innerHTML =
-      '<div style="font-weight:700;margin-bottom:6px">Kindle Web Capture v1.0.1</div>' +
+      '<div style="font-weight:700;margin-bottom:6px">Kindle Web Capture v1.0.2</div>' +
       '<div>開始番号: <input id="kc-start-page" type="number" min="1" value="1" style="width:64px"></div>' +
       '<div id="kc-status" style="margin:6px 0;min-height:36px">待機中</div>' +
       '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
@@ -108,23 +106,6 @@
 
   async function waitForTargetImage() {
     const deadline = Date.now() + 10000;
-    for (;;) {
-      const img = pickImageElement();
-      if (img && img.complete && img.naturalWidth > 0 && img.naturalHeight > 0) {
-        return img;
-      }
-      if (Date.now() > deadline) return null;
-      await sleep(100);
-    }
-  }
-
-  function pickTargetImage() {
-    const img = waitForTargetImage();
-    return img;
-  }
-
-  async function waitForImageReady(timeoutMs) {
-    const deadline = Date.now() + timeoutMs;
     for (;;) {
       const img = pickImageElement();
       if (img && img.complete && img.naturalWidth > 0 && img.naturalHeight > 0) {
@@ -187,19 +168,15 @@
     return png;
   }
 
-  async function pngBlobForImage(prompt) {
-    const current = await pickTargetImage();
+  async function pngBlobForImage() {
+    const current = await waitForTargetImage();
     if (!current) {
       return null;
     }
-    const src0 = current.src;
-    const url = new URL(src0, location.href);
-    const protocol = url.protocol;
-    const isBlob = protocol === 'blob:';
-    if (isBlob || !isBlob && !isSupportedImageUrl(url.pathname)) {
-      // ✅ v1.0.1: blob は CSP の connect-src で fetch が弾かれるケースがあるため
-      //   blob: の画像を <img> から取り出し、Canvas へ直接描画します。
-      // 1) 第一手段: <img> からの Canvas 描画
+    const url = new URL(current.src, location.href);
+    const isBlob = url.protocol === 'blob:';
+    if (isBlob || !isSupportedImageUrl(url.pathname)) {
+      // blob: は CSP の connect-src で fetch が弾かれるため、表示中の <img> を Canvas へ直接描画する。
       try {
         const blob = await pngBlobForCanvas(current);
         const currentAfter = pickImageElement();
@@ -209,7 +186,6 @@
         return {
           blob,
           hash: fnv1aHash(new Uint8Array(await blob.arrayBuffer())),
-          isBlob,
           source: 'canvas',
         };
       } catch (drawErr) {
@@ -223,7 +199,6 @@
           return {
             blob,
             hash: fnv1aHash(new Uint8Array(await blob.arrayBuffer())),
-            isBlob,
             source: 'fallback fetch',
           };
         } catch (fetchError) {
@@ -243,33 +218,6 @@
 
   let dirHandle = null;
 
-  async function savePage(pageNo, bytes) {
-    if (!dirHandle) {
-      dirHandle = await window.showDirectoryPicker();
-    }
-    const fileName = `page_${String(pageNo).padStart(4, '0')}.png`;
-    const fileHandle = await dirHandle.getFileHandle(fileName, { create: true });
-    const writable = await fileHandle.createWritable();
-    await writable.write(bytes);
-    await writable.close();
-  }
-
-  function findNextButton() {
-    for (const sel of NEXT_SELECTORS) {
-      const btn = document.querySelector(sel);
-      if (btn) return btn;
-    }
-    return null;
-  }
-
-  function capturePage(pageNo) {
-    const current = pickTargetImage();
-    if (!current) {
-      throw new Error(`画像が見つかりません（${pageNo}ページ目）`);
-    }
-    return pngBlobForImage(current);
-  }
-
   async function captureOnePage(pageNo, ctx) {
     if (stopRequested) {
       return { ok: false, stopped: true };
@@ -286,15 +234,12 @@
       return { ok: false, stopped: true };
     }
     if (!result) {
-      setStatus(`エラー（${pageNo}ページ目）: 画像が見つかりません（${pageNo}ページ目）`, true);
+      setStatus(`エラー（${pageNo}ページ目）: 画像が見つかりません`, true);
       return { ok: false, error: new Error('画像が見つかりません') };
     }
-    if (stopRequested) {
-      return { ok: false, stopped: true };
-    }
-    const { blob, hash, isBlob, source } = result;
+    const { blob, hash, source } = result;
     if (ctx.lastHash === hash) {
-      setStatus(`完了: ${pageNo - 1}ページ保存しました（重複画像で終了）`, false);
+      setStatus(`完了: ${ctx.saved}ページ保存しました（重複画像で終了）`, false);
       return { ok: false, duplicate: true };
     }
     if (stopRequested) {
@@ -320,114 +265,215 @@
     }
   }
 
-  async function waitForSrcChange(prevSrc, timeoutMs = 10000) {
-    const start = Date.now();
-    while (Date.now() - start < timeoutMs) {
-      if (stopRequested) return { loaded: false, stopped: true };
-      const img = pickImageElement();
-      if (img && img.src !== prevSrc && img.complete && img.naturalWidth > 0 && img.naturalHeight > 0) {
-        return { loaded: true, img };
-      }
-      await sleep(100);
+  // ---- ページ送り（v1.0.2: 複合方式・上限時間つき・経過表示つき） ----
+
+  function findNextButton() {
+    for (const sel of NEXT_SELECTORS) {
+      const btn = document.querySelector(sel);
+      if (btn) return btn;
     }
-    return { loaded: false, timeout: true };
+    return null;
   }
 
-  async function loadNextPage(prevSrc, clickAttempt = 1) {
-    const btn = findNextButton();
-    if (!btn || btn.disabled) {
-      return { ok: false, reason: 'no-next' };
+  const fpCanvas = document.createElement('canvas');
+  fpCanvas.width = 24;
+  fpCanvas.height = 24;
+
+  function sampleFingerprint(img) {
+    try {
+      if (!img || !img.complete || img.naturalWidth === 0) return null;
+      const cx = fpCanvas.getContext('2d', { willReadFrequently: true });
+      if (!cx) return null;
+      cx.drawImage(img, 0, 0, 24, 24);
+      const data = cx.getImageData(0, 0, 24, 24).data;
+      return fnv1aHash(data);
+    } catch (e) {
+      return null;
     }
-    btn.click();
-    const changed = await waitForSrcChange(prevSrc);
-    if (changed.loaded) {
-      return { ok: true };
+  }
+
+  function currentPageState() {
+    const img = pickImageElement();
+    if (!img) return null;
+    return { src: img.src, fp: sampleFingerprint(img) };
+  }
+
+  function fireMouse(el, type, x, y) {
+    if (!el) return;
+    el.dispatchEvent(new MouseEvent(type, {
+      bubbles: true, cancelable: true, view: window,
+      clientX: x, clientY: y, button: 0,
+    }));
+  }
+
+  function hoverLeftEdge() {
+    const x = 24;
+    const y = Math.floor(window.innerHeight / 2);
+    const el = document.elementFromPoint(x, y) || document.body;
+    fireMouse(el, 'mouseover', x, y);
+    fireMouse(el, 'mousemove', x, y);
+    const container = document.querySelector('.kr-chevron-container-left');
+    if (container) {
+      const r = container.getBoundingClientRect();
+      const cx = Math.floor(r.left + r.width / 2);
+      const cy = Math.floor(r.top + r.height / 2);
+      fireMouse(container, 'mouseover', cx, cy);
+      fireMouse(container, 'mousemove', cx, cy);
     }
-    if (changed.stopped) {
-      return { ok: false, reason: 'stopped' };
+  }
+
+  function clickLeftZone() {
+    const x = Math.max(16, Math.floor(window.innerWidth * 0.05));
+    const y = Math.floor(window.innerHeight / 2);
+    const el = document.elementFromPoint(x, y) || document.body;
+    fireMouse(el, 'mousedown', x, y);
+    fireMouse(el, 'mouseup', x, y);
+    fireMouse(el, 'click', x, y);
+  }
+
+  function sendArrowLeft() {
+    const opts = {
+      key: 'ArrowLeft', code: 'ArrowLeft', keyCode: 37, which: 37,
+      bubbles: true, cancelable: true,
+    };
+    document.dispatchEvent(new KeyboardEvent('keydown', opts));
+    document.dispatchEvent(new KeyboardEvent('keyup', opts));
+    if (document.body) {
+      document.body.dispatchEvent(new KeyboardEvent('keydown', opts));
+      document.body.dispatchEvent(new KeyboardEvent('keyup', opts));
     }
-    if (clickAttempt < 3) {
-      await sleep(500);
-      const btn2 = findNextButton();
-      if (btn2 && !btn2.disabled) {
-        btn2.click();
-        const changed2 = await waitForSrcChange(prevSrc);
-        if (changed2.loaded) return { ok: true };
-        if (changed2.stopped) return { ok: false, reason: 'stopped' };
+  }
+
+  async function waitForPageChange(prev, timeoutMs, pageNo, label, advanceStart) {
+    const start = Date.now();
+    let lastStatusSec = -1;
+    for (;;) {
+      if (stopRequested) return { changed: false, stopped: true };
+      const now = Date.now();
+      const elapsedTotal = Math.floor((now - advanceStart) / 1000);
+      if (elapsedTotal !== lastStatusSec) {
+        lastStatusSec = elapsedTotal;
+        setStatus(`ページ送り中… ${pageNo}ページ目の次へ（${label}、経過${elapsedTotal}秒）`, false);
       }
-      return loadNextPage(prevSrc, clickAttempt + 1);
+      const cur = currentPageState();
+      if (cur) {
+        const srcChanged = cur.src !== prev.src;
+        const fpChanged = prev.fp && cur.fp && cur.fp !== prev.fp;
+        if (srcChanged || fpChanged) {
+          return { changed: true };
+        }
+      }
+      if (now - start >= timeoutMs) return { changed: false };
+      await sleep(250);
     }
-    return { ok: false, reason: 'src-not-changed' };
+  }
+
+  async function loadNextPage(prev, pageNo) {
+    const advanceStart = Date.now();
+    const history = [];
+    const remaining = () => ADVANCE_TOTAL_TIMEOUT_MS - (Date.now() - advanceStart);
+
+    const strategies = [
+      {
+        name: 'ボタン',
+        run: async () => {
+          hoverLeftEdge();
+          await sleep(600);
+          const btn = findNextButton();
+          if (!btn) return 'skip';
+          if (btn.disabled) return 'disabled';
+          btn.click();
+          return 'acted';
+        },
+      },
+      {
+        name: '左端クリック',
+        run: async () => { clickLeftZone(); return 'acted'; },
+      },
+      {
+        name: '←キー',
+        run: async () => { sendArrowLeft(); return 'acted'; },
+      },
+    ];
+
+    for (const st of strategies) {
+      if (stopRequested) return { ok: false, reason: 'stopped', history };
+      if (remaining() <= 0) break;
+      let acted;
+      try {
+        acted = await st.run();
+      } catch (e) {
+        history.push(`${st.name}: 例外`);
+        continue;
+      }
+      if (acted === 'skip') { history.push(`${st.name}: なし`); continue; }
+      if (acted === 'disabled') { history.push(`${st.name}: 無効`); continue; }
+      const waitMs = Math.min(ADVANCE_STRATEGY_TIMEOUT_MS, remaining());
+      const res = await waitForPageChange(prev, waitMs, pageNo, st.name, advanceStart);
+      if (res.stopped) return { ok: false, reason: 'stopped', history };
+      if (res.changed) {
+        history.push(`${st.name}: 成功`);
+        return { ok: true, via: st.name, history };
+      }
+      history.push(`${st.name}: 変化なし`);
+    }
+    return { ok: false, reason: 'no-change', history };
   }
 
   async function runCapture(startNo, testOne) {
     if (activeSession) return;
     activeSession = true;
     stopRequested = false;
-    const ctx = { lastHash: null };
+    const ctx = { lastHash: null, saved: 0 };
     let pageNo = startNo;
-    let saved = 0;
-    const totalNote = testOne ? '' : '';
     try {
       for (;;) {
         if (stopRequested) {
-          setStatus(`停止しました: ${saved}ページ保存しました`, false);
+          setStatus(`停止しました: ${ctx.saved}ページ保存しました`, false);
           break;
         }
         if (pageNo - startNo + 1 > MAX_PAGES) {
-          setStatus(`上限（${MAX_PAGES}ページ）に達しました: ${saved}ページ保存しました`, false);
+          setStatus(`上限（${MAX_PAGES}ページ）に達しました: ${ctx.saved}ページ保存しました`, false);
           break;
         }
-        setStatus(`保存準備中… ${pageNo}ページ目（保存済み ${saved}ページ / 上限${PROGRESS_TOTAL}ページ）`, false);
-        if (stopRequested) {
-          setStatus(`停止しました: ${saved}ページ保存しました`, false);
-          break;
-        }
+        setStatus(`保存中… ${pageNo}ページ目（保存済み ${ctx.saved}ページ / 上限${PROGRESS_TOTAL}ページ）`, false);
         const res = await captureOnePage(pageNo, ctx);
         if (res.stopped) {
-          setStatus(`停止しました: ${saved}ページ保存しました`, false);
+          setStatus(`停止しました: ${ctx.saved}ページ保存しました`, false);
           break;
         }
         if (res.duplicate) {
-          saved++;
-          setStatus(`完了: ${saved}ページ保存しました（重複画像で終了）`, false);
           break;
         }
         if (!res.ok) {
           break;
         }
-        saved++;
+        ctx.saved++;
         if (testOne) {
           setStatus(`テスト完了: ${res.fileName} を保存しました（${res.source}）`, false);
           break;
         }
-        setStatus(`保存済み ${saved}ページ / 上限${PROGRESS_TOTAL}ページ（次ページへ移動中…）`, false);
+        setStatus(`保存済み ${ctx.saved}ページ / 上限${PROGRESS_TOTAL}ページ（次ページへ移動中…）`, false);
         await sleep(WAIT_BASE_MS);
-        const currentImg = pickImageElement();
-        if (!currentImg) {
-          setStatus(`完了: ${saved}ページ保存しました（画像が見つからなくなりました）`, false);
+        const prev = currentPageState();
+        if (!prev) {
+          setStatus(`完了: ${ctx.saved}ページ保存しました（画像が見つからなくなりました）`, false);
           break;
         }
-        const prevSrc = currentImg.src;
-        const nextRes = await loadNextPage(prevSrc);
-        if (nextRes.reason === 'no-next') {
-          setStatus(`完了: ${saved}ページ保存しました（最終ページ）`, false);
-          break;
-        }
+        const nextRes = await loadNextPage(prev, pageNo);
         if (nextRes.reason === 'stopped') {
-          setStatus(`停止しました: ${saved}ページ保存しました`, false);
+          setStatus(`停止しました: ${ctx.saved}ページ保存しました`, false);
           break;
         }
         if (!nextRes.ok) {
-          setStatus(`エラー（${pageNo}ページ目→次ページ）: ページ送りに失敗しました（画像が切り替わりませんでした）`, true);
+          setStatus(
+            `ページ送りができませんでした（${nextRes.history.join(' / ')}）。最終ページの可能性もあります: ${ctx.saved}ページ保存済み`,
+            true
+          );
           break;
         }
         pageNo = pageNo + 1;
-        if (pageNo > MAX_PAGES) {
-          setStatus(`上限（${MAX_PAGES}ページ）に達しました: ${saved}ページ保存しました`, false);
-          break;
-        }
-        await sleep(ORDER_MIN_GAP_MS);
+        await sleep(300);
       }
     } catch (err) {
       const msg = sameErrorMessage(err);
