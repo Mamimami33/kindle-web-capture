@@ -38,16 +38,23 @@
     <p class="ver">Kindle Cloud Reader DOM Probe v1.0.0 ／ 要 Tampermonkey（Chrome / Edge）</p>
   </div>
 
-  <h2>使い方</h2>
+  <div class="card">
+    <h2 style="margin-top:0">STEP 2：キャプチャ本体</h2>
+    <p>表示中のページ画像を PNG で保存し、自動でページ送りして連番保存するスクリプトです。プローブの調査結果（1枚画像・blob形式）に合わせて作ってあります。</p>
+    <a class="install" href="./kindle-capture.user.js">キャプチャをインストール</a>
+    <p class="ver">Kindle Web Page Capture v1.0.0 ／ 要 Tampermonkey（Chrome / Edge）</p>
+  </div>
+
+  <h2>使い方（キャプチャ）</h2>
   <ol>
-    <li>上のボタンからプローブをインストールする（Tampermonkey の確認画面で「インストール」）</li>
-    <li><a href="https://read.amazon.co.jp/" style="color:#93c5fd">read.amazon.co.jp</a> で『幼女戦記』を開く</li>
-    <li>右下の <code>DOM調査</code> → <code>現在ページを調査</code> → <code>JSONコピー</code></li>
-    <li>本文を手動で1ページめくって、もう一度 調査 → JSONコピー</li>
-    <li>2つの JSON を Muse のチャットに貼る</li>
+    <li>上のボタンからキャプチャをインストールする</li>
+    <li><a href="https://read.amazon.co.jp/" style="color:#93c5fd">read.amazon.co.jp</a> で『幼女戦記』を開き、先頭ページを表示する</li>
+    <li>右下のパネルで <code>1ページだけテスト</code> を押し、保存先フォルダを選ぶ</li>
+    <li>保存された page_0001.png を開いて、解像度と内容を確認する</li>
+    <li>問題なければ先頭ページに戻して <code>全ページ開始</code>（最終ページで自動停止します）</li>
   </ol>
 
-  <p class="note">キャプチャ本体（自動ページ送り・連番保存）は、プローブの結果を見てからここに追加します。</p>
+  <p class="note">プローブは調査が済んだので、もう使わなくて大丈夫です（Tampermonkey 側で無効化・削除して構いません）。</p>
 </main>
 </body>
 </html>
